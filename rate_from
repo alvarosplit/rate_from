@@ -1,0 +1,176 @@
+#!/usr/bin/perl
+
+#
+# Rate MAIL FROM to avoid mailings.
+#
+# Alvaro Marin Illera - Oct 2008 - <alvaro at hostalia.com>
+#
+#	Hostalia Internet - http://www.hostalia.com
+#
+#
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 2 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#
+# Installation steps:
+#
+# mysql> create database rate_from;
+# mysql> use rate_from;
+# mysql> create table rate_from (
+#	id int NOT NULL auto_increment,
+#	mail_from varchar(150) NOT NULL,
+#	count int(10),
+#	timestamp int(11),
+#	PRIMARY KEY  (`id`),
+#	KEY `mail_from` (`mail_from`)
+# );
+# mysql> create table rate_from_default (
+#	id int NOT NULL auto_increment,
+#	mail_from varchar(150) NOT NULL,
+#	count int(10),
+#        PRIMARY KEY  (`id`),
+#        KEY `mail_from` (`mail_from`)
+# );
+#
+# Set the default limit:
+#
+# mysql> insert into rate_from_default values("","default","100");
+#
+# You can insert in rate_from_default a different value for some accounts:
+#
+# mysql> insert into rate_from_default values("","foo@foobar.com","1000");
+#
+# Set permissions to access:
+# 
+# mysql> grant all on rate_from.* to user@'127.0.0.1' identified by "password";
+#
+# Create an archive called: /var/log/rate_from.log with write permissions for qmail user.
+#
+
+use strict;
+use warnings;
+use DBI;
+
+if ( !$ENV{"TCPREMOTEIP"} ){
+       exit();
+}
+
+# Bounces
+if ($ENV{"SMTPMAILFROM"} eq ""){
+	exit();
+}
+
+# Mailman
+if ($ENV{"SMTPMAILFROM"} =~ /-bounces@/) {
+	exit();
+}
+
+my $remote = $ENV{"TCPREMOTEIP"};
+my $mailfrom = $ENV{"SMTPMAILFROM"};
+my $mailto = $ENV{"SMTPRCPTTO"};
+
+# Whitelisted hosts
+my @host_whitelist=("X.X.X.X","X.X.X.X");
+
+foreach (@host_whitelist){
+	if ($_ eq $remote){
+		exit();
+	}
+}
+
+# Remote host is not whitelisted
+my $sql_count="";
+my $sql_limit_default="";
+my $sql_time="";
+my $time_aux="";
+
+# Connect to the local database
+my $dbh = DBI->connect("DBI:mysql:rate_from:127.0.0.1","user",'password') or exit();
+
+# rate_from table
+#+-----+-------------------------------------+-------+------------+
+#| id  | mail_from                           | count | timestamp  |
+#+-----+-------------------------------------+-------+------------+
+#|  42 | foouser@foo.com                     |   356 | 1205248034 |
+#|  75 | foouser2@foo.com                    |   146 | 1205250827 |
+#| 154 | baruser@bar.com                     |    56 | 1205240765 |
+#| 221 | baruser2@bar.com                    |    24 | 1205249301 |
+#+-----+-------------------------------------+-------+------------+
+#
+my $sth = $dbh->prepare("select count,timestamp from rate_from where mail_from=\"$mailfrom\";") or exit();
+$sth->execute;
+$sth->bind_columns(undef,\$sql_count,\$sql_time);
+$sth->fetch();
+
+# rate_from_default table. 
+# +----+-----------+-------+
+#| id | mail_from | count |
+#+----+-----------+-------+
+#|  1 | default   |   100 |
+#+----+-----------+-------+
+#
+# If there is a record for the MAIL FROM (foo@foobar.com, for example), we take the bigger value.
+# If there isn't a record, we take the "default" value.
+#
+$sth = $dbh->prepare("select count from rate_from_default where mail_from=\"$mailfrom\" or mail_from=\"default\" ORDER BY count DESC LIMIT 1;");
+$sth->execute;
+$sth->bind_columns(undef,\$sql_limit_default);
+$sth->fetch();
+
+# If variables are not defined => there is not a record for that mail
+if ($sql_count eq "" or $sql_time eq ""){
+	# Insert the new MAIL FROM with the actual timestamp
+	$time_aux=time;	
+	$sth = $dbh->prepare("insert into rate_from values(\"\",\"$mailfrom\",\"1\",\"$time_aux\");");
+	$sth->execute;
+	$sth->finish();
+	$dbh->disconnect;
+	if (-w "/var/log/rate_from.log") {
+		`echo "\$(date +"%d/%m/%y %T") - NEW RECORD: $mailfrom: 1" >> /var/log/rate_from.log `;
+	}
+	exit();
+}
+# Exists...UPDATE!
+else {
+	$time_aux=time;
+	# Timestamp! Expire if > 1hour
+	if ( ($time_aux - $sql_time) > 3600) {
+		$sth = $dbh->prepare("update rate_from set count=\"1\",timestamp=\"$time_aux\" where mail_from=\"$mailfrom\";");
+		$sth->execute;
+		if (-w "/var/log/rate_from.log") {
+			`echo "\$(date +"%d/%m/%y %T") - EXPIRE: $mailfrom: 1" >> /var/log/rate_from.log `;
+		}
+		exit();
+	}
+	# Update the value
+	else {
+		$sql_count++;
+		$sth = $dbh->prepare("update rate_from set count=\"".$sql_count."\" where mail_from=\"$mailfrom\";");
+		$sth->execute;
+		if (-w "/var/log/rate_from.log") {
+			`echo "\$(date +"%d/%m/%y %T") - UPDATE: $mailfrom: $sql_count" >> /var/log/rate_from.log `;
+		}
+	}
+}
+
+$sth->finish();
+$dbh->disconnect;
+
+# REJECT TEMPORALY
+if ($sql_count > $sql_limit_default){
+	if (-w "/var/log/rate_from.log") {
+		`echo "\$(date +"%d/%m/%y %T") - REJECT: $mailfrom (-> $mailto): $sql_count" >> /var/log/rate_from.log `;
+	}
+	print "E451 Sending rate limit has been exceeded. Try again later. (#4.3.0)\n";
+	exit();
+}
+
+exit();
+
