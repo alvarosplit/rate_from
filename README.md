@@ -1,6 +1,5 @@
-Rate MAIL FROM to avoid mailings.
-
-Alvaro Marin Illera - Oct 2008 - split@splitcc.net
+       Rate MAIL FROM to avoid mailings. For qmail with SPP patch.
+       Alvaro Marin Illera - Oct 2008 - split@splitcc.net
 
 Installation steps:
 
