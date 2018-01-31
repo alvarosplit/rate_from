@@ -1,15 +1,25 @@
 Installation steps:
 
 mysql> create database rate_from;
+
 mysql> use rate_from;
+
 mysql> create table rate_from (
+
 id int NOT NULL auto_increment,
+
 mail_from varchar(150) NOT NULL,
+
 count int(10),
+
 timestamp int(11),
+
 PRIMARY KEY  (`id`),
+
 KEY `mail_from` (`mail_from`)
+
 );
+
 mysql> create table rate_from_default (
 id int NOT NULL auto_increment,
 mail_from varchar(150) NOT NULL,
