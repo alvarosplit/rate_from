@@ -1,7 +1,5 @@
 Rate MAIL FROM to avoid mailings.
-
-Alvaro Marin Illera - Oct 2008 - <alvaro at hostalia.com>
-
+Alvaro Marin Illera - Oct 2008 - split@splitcc.net
 
 Installation steps:
 
