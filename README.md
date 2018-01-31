@@ -1,4 +1,5 @@
 Rate MAIL FROM to avoid mailings.
+
 Alvaro Marin Illera - Oct 2008 - split@splitcc.net
 
 Installation steps:
